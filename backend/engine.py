@@ -1,51 +1,14 @@
-"""
-Monte Carlo Option Pricing Engine
-==================================
-Core simulation module using NumPy for vectorised stochastic computation.
-
-Implements:
-  - Geometric Brownian Motion (GBM) path simulation
-  - European option pricing via Monte Carlo (standard, antithetic, control variate)
-  - Black-Scholes analytical pricing
-  - Sensitivity analysis (price vs spot, vol, time)
-  - Convergence tracking for all MC methods
-
-All heavy computation is vectorised with NumPy — no Python loops over simulations.
-"""
+# engine.py — core pricing engine
+# all the heavy math lives here, numpy does the grunt work
 
 import numpy as np
 from scipy.stats import norm
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
-# ──────────────────────────────────────────────────────────────
-# Black-Scholes Analytical Pricing
-# ──────────────────────────────────────────────────────────────
 
-def black_scholes(
-    S0: float,
-    K: float,
-    T: float,
-    r: float,
-    sigma: float,
-    option_type: Literal["call", "put"] = "call",
-) -> float:
-    """
-    Compute the Black-Scholes price for a European option.
-
-    Parameters
-    ----------
-    S0    : Current spot price
-    K     : Strike price
-    T     : Time to maturity (years)
-    r     : Risk-free interest rate (annualised)
-    sigma : Volatility (annualised)
-    option_type : 'call' or 'put'
-
-    Returns
-    -------
-    Analytical option price.
-    """
+def black_scholes(S0, K, T, r, sigma, option_type="call"):
+    """Closed-form BS price. Nothing fancy, just the textbook formula."""
     d1 = (np.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
 
@@ -55,41 +18,23 @@ def black_scholes(
         return float(K * np.exp(-r * T) * norm.cdf(-d2) - S0 * norm.cdf(-d1))
 
 
-# ──────────────────────────────────────────────────────────────
-# GBM Path Simulation (for visualisation)
-# ──────────────────────────────────────────────────────────────
-
-def simulate_gbm_paths(
-    S0: float,
-    r: float,
-    sigma: float,
-    T: float,
-    n_steps: int = 252,
-    n_paths: int = 30,
-    seed: int | None = None,
-) -> dict:
-    """
-    Simulate GBM price paths for visualisation.
-
-    Returns dict with:
-      - paths: (n_paths, n_steps+1) array of price trajectories
-      - time_grid: (n_steps+1,) array of time points
-      - mean_path: (n_steps+1,) array of mean across paths
-    """
+def simulate_gbm_paths(S0, r, sigma, T, n_steps=252, n_paths=30, seed=None):
+    """Generate sample GBM trajectories for the frontend chart."""
     rng = np.random.default_rng(seed)
     dt = T / n_steps
+
+    # risk-neutral drift with Ito correction (the -sigma^2/2 matters, trust me)
     drift = (r - 0.5 * sigma**2) * dt
     vol = sigma * np.sqrt(dt)
 
-    # Vectorised: generate all random increments at once
     Z = rng.standard_normal((n_paths, n_steps))
-    log_returns = drift + vol * Z  # (n_paths, n_steps)
+    log_returns = drift + vol * Z
 
-    # Cumulative sum of log-returns, prepend 0 for initial price
+    # cumsum trick to avoid looping over timesteps
     log_prices = np.concatenate(
         [np.zeros((n_paths, 1)), np.cumsum(log_returns, axis=1)], axis=1
     )
-    paths = S0 * np.exp(log_prices)  # (n_paths, n_steps+1)
+    paths = S0 * np.exp(log_prices)
 
     time_grid = np.linspace(0, T, n_steps + 1)
     mean_path = paths.mean(axis=0)
@@ -101,19 +46,14 @@ def simulate_gbm_paths(
     }
 
 
-# ──────────────────────────────────────────────────────────────
-# Monte Carlo Pricing Methods
-# ──────────────────────────────────────────────────────────────
-
 @dataclass
 class MCResult:
-    """Result container for a Monte Carlo pricing run."""
     price: float
     stderr: float
     payoffs: list[float]
-    convergence: list[dict]  # [{n, price, stderr}, ...]
+    convergence: list[dict]
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "price": self.price,
             "stderr": self.stderr,
@@ -122,17 +62,8 @@ class MCResult:
         }
 
 
-def _convergence_tracker(
-    cumsum: np.ndarray,
-    cumsum2: np.ndarray,
-    disc: float,
-    n_sim: int,
-    n_points: int = 500,
-) -> list[dict]:
-    """
-    Build convergence data from cumulative sums.
-    Sample at ~n_points evenly spaced indices.
-    """
+def _convergence_tracker(cumsum, cumsum2, disc, n_sim, n_points=500):
+    """Sample the running average at ~500 points for the convergence plot."""
     indices = np.unique(
         np.concatenate([
             np.linspace(0, n_sim - 1, min(n_points, n_sim), dtype=int),
@@ -144,25 +75,18 @@ def _convergence_tracker(
         n = int(i + 1)
         mean = cumsum[i] / n
         mean2 = cumsum2[i] / n
-        var = max(mean2 - mean**2, 0.0)
+        var = max(mean2 - mean**2, 0.0)  # clamp to avoid floating point nonsense
         se = np.sqrt(var / n) * disc if n > 1 else 0.0
         conv.append({"n": n, "price": float(mean * disc), "stderr": float(se)})
     return conv
 
 
-def mc_standard(
-    S0: float,
-    K: float,
-    T: float,
-    r: float,
-    sigma: float,
-    n_sim: int = 50000,
-    option_type: str = "call",
-    seed: int | None = None,
-) -> MCResult:
-    """Standard Monte Carlo pricing — fully vectorised."""
+def mc_standard(S0, K, T, r, sigma, n_sim=50000, option_type="call", seed=None):
+    """Plain vanilla MC — generate terminal prices, compute payoffs, average."""
     rng = np.random.default_rng(seed)
     disc = np.exp(-r * T)
+
+    # Ito-corrected drift under Q measure
     drift = (r - 0.5 * sigma**2) * T
     vol = sigma * np.sqrt(T)
 
@@ -174,7 +98,6 @@ def mc_standard(
     else:
         payoffs = np.maximum(K - ST, 0.0)
 
-    # Convergence tracking
     cumsum = np.cumsum(payoffs)
     cumsum2 = np.cumsum(payoffs**2)
     convergence = _convergence_tracker(cumsum, cumsum2, disc, n_sim)
@@ -191,19 +114,10 @@ def mc_standard(
     )
 
 
-def mc_antithetic(
-    S0: float,
-    K: float,
-    T: float,
-    r: float,
-    sigma: float,
-    n_sim: int = 50000,
-    option_type: str = "call",
-    seed: int | None = None,
-) -> MCResult:
+def mc_antithetic(S0, K, T, r, sigma, n_sim=50000, option_type="call", seed=None):
     """
-    Antithetic variates Monte Carlo.
-    For each Z, also use -Z — paired paths are negatively correlated.
+    Antithetic variates — for every path Z, also run -Z.
+    Negatively correlated pairs cancel out some noise for free.
     """
     rng = np.random.default_rng(seed)
     disc = np.exp(-r * T)
@@ -213,7 +127,7 @@ def mc_antithetic(
 
     Z = rng.standard_normal(half)
     ST_pos = S0 * np.exp(drift + vol * Z)
-    ST_neg = S0 * np.exp(drift + vol * (-Z))
+    ST_neg = S0 * np.exp(drift + vol * (-Z))  # the mirror path
 
     if option_type == "call":
         pay_pos = np.maximum(ST_pos - K, 0.0)
@@ -222,13 +136,13 @@ def mc_antithetic(
         pay_pos = np.maximum(K - ST_pos, 0.0)
         pay_neg = np.maximum(K - ST_neg, 0.0)
 
-    # Average of each antithetic pair
+    # average each pair — this is where the variance reduction kicks in
     avg_payoffs = (pay_pos + pay_neg) / 2.0
 
     cumsum = np.cumsum(avg_payoffs)
     cumsum2 = np.cumsum(avg_payoffs**2)
     convergence = _convergence_tracker(cumsum, cumsum2, disc, half)
-    # Rescale n in convergence to reflect total sims (each pair = 2 sims)
+    # each pair uses 2 draws, so rescale for the x-axis
     for c in convergence:
         c["n"] = c["n"] * 2
 
@@ -236,7 +150,7 @@ def mc_antithetic(
     var = float(avg_payoffs.var())
     stderr = float(np.sqrt(var / half) * disc)
 
-    # Full payoff list (both sides interleaved)
+    # interleave both sides for the histogram
     all_payoffs = np.empty(n_sim)
     all_payoffs[0::2] = pay_pos * disc
     all_payoffs[1::2] = pay_neg * disc
@@ -249,25 +163,17 @@ def mc_antithetic(
     )
 
 
-def mc_control_variate(
-    S0: float,
-    K: float,
-    T: float,
-    r: float,
-    sigma: float,
-    n_sim: int = 50000,
-    option_type: str = "call",
-    seed: int | None = None,
-) -> MCResult:
+def mc_control_variate(S0, K, T, r, sigma, n_sim=50000, option_type="call", seed=None):
     """
-    Control variate Monte Carlo.
-    Uses S(T) as the control — E[S(T)] = S0 * exp(rT) is known analytically.
+    Control variate using S(T) — we know E[S(T)] = S0*exp(rT) analytically,
+    so we can use that to correct the MC estimate. Biggest variance reduction
+    of the three methods, typically 50%+ improvement.
     """
     rng = np.random.default_rng(seed)
     disc = np.exp(-r * T)
     drift = (r - 0.5 * sigma**2) * T
     vol = sigma * np.sqrt(T)
-    expected_ST = S0 * np.exp(r * T)
+    expected_ST = S0 * np.exp(r * T)  # known under Q
 
     Z = rng.standard_normal(n_sim)
     ST = S0 * np.exp(drift + vol * Z)
@@ -277,11 +183,11 @@ def mc_control_variate(
     else:
         raw_payoffs = np.maximum(K - ST, 0.0)
 
-    # Compute optimal beta via covariance
+    # OLS beta — how much does the payoff move with the stock?
     cov_matrix = np.cov(raw_payoffs, ST)
     beta = cov_matrix[0, 1] / cov_matrix[1, 1] if cov_matrix[1, 1] > 0 else 0.0
 
-    # Adjusted payoffs
+    # if simulated stock prices ran high, correct the option price downward
     adjusted = raw_payoffs - beta * (ST - expected_ST)
 
     cumsum = np.cumsum(adjusted)
@@ -300,51 +206,32 @@ def mc_control_variate(
     )
 
 
-# ──────────────────────────────────────────────────────────────
-# Sensitivity Analysis
-# ──────────────────────────────────────────────────────────────
+# --- sensitivity sweeps for the frontend charts ---
 
-def sensitivity_spot(
-    S0: float, K: float, T: float, r: float, sigma: float, option_type: str = "call"
-) -> dict:
-    """BS price as a function of spot price."""
+def sensitivity_spot(S0, K, T, r, sigma, option_type="call"):
     spots = np.linspace(S0 * 0.5, S0 * 1.5, 50)
     prices = [black_scholes(s, K, T, r, sigma, option_type) for s in spots]
     if option_type == "call":
         intrinsic = [max(s - K, 0) for s in spots]
     else:
         intrinsic = [max(K - s, 0) for s in spots]
-    return {
-        "spots": spots.tolist(),
-        "prices": prices,
-        "intrinsic": intrinsic,
-    }
+    return {"spots": spots.tolist(), "prices": prices, "intrinsic": intrinsic}
 
 
-def sensitivity_vol(
-    S0: float, K: float, T: float, r: float, sigma: float, option_type: str = "call"
-) -> dict:
-    """BS price as a function of volatility."""
+def sensitivity_vol(S0, K, T, r, sigma, option_type="call"):
     vols = np.linspace(0.05, 0.80, 50)
     prices = [black_scholes(S0, K, T, r, v, option_type) for v in vols]
     return {"vols": (vols * 100).tolist(), "prices": prices}
 
 
-def sensitivity_time(
-    S0: float, K: float, T: float, r: float, sigma: float, option_type: str = "call"
-) -> dict:
-    """BS price as a function of time-to-maturity."""
+def sensitivity_time(S0, K, T, r, sigma, option_type="call"):
     times = np.linspace(0.01, T, 50)
     prices = [black_scholes(S0, K, t, r, sigma, option_type) for t in times]
     return {"times": times.tolist(), "prices": prices}
 
 
-# ──────────────────────────────────────────────────────────────
-# Histogram Builder
-# ──────────────────────────────────────────────────────────────
-
-def build_histogram(payoffs: list[float], bins: int = 60) -> list[dict]:
-    """Build histogram data for the payoff distribution."""
+def build_histogram(payoffs, bins=60):
+    """Bin the payoffs for the distribution chart. Handles the OTM spike at zero."""
     arr = np.array(payoffs)
     non_zero = arr[arr > 0]
 
