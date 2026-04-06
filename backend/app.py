@@ -1,15 +1,5 @@
-"""
-Flask API Server — Monte Carlo Option Pricing
-==============================================
-Exposes RESTful endpoints for the simulation engine.
-
-Endpoints:
-  POST /api/simulate    — Run full simulation (GBM paths, all MC methods, BS price)
-  POST /api/sensitivity — Run sensitivity analysis (spot, vol, time)
-  GET  /api/health      — Health check
-
-All computation happens in engine.py via NumPy — this is just the HTTP layer.
-"""
+# app.py — flask server, thin wrapper around engine.py
+# serves the API endpoints and the frontend HTML in one go
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -29,7 +19,7 @@ from engine import (
 )
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests from the React frontend
+CORS(app)
 
 FRONTEND_HTML = r'''<!DOCTYPE html>
 <html lang="en">
@@ -161,31 +151,7 @@ def health():
 
 @app.route("/api/simulate", methods=["POST"])
 def simulate():
-    """
-    Run the full Monte Carlo simulation.
-
-    Request JSON:
-    {
-        "S0": 100,       // Spot price
-        "K": 105,        // Strike price
-        "T": 1.0,        // Time to maturity (years)
-        "r": 0.05,       // Risk-free rate
-        "sigma": 0.2,    // Volatility
-        "n_sim": 50000,  // Number of simulations
-        "n_paths": 30,   // Number of GBM paths to visualise
-        "option_type": "call"  // "call" or "put"
-    }
-
-    Returns JSON with:
-      - bs_price: Black-Scholes analytical price
-      - mc_standard: {price, stderr, convergence}
-      - mc_antithetic: {price, stderr, convergence}
-      - mc_control: {price, stderr, convergence}
-      - gbm_paths: {paths, time_grid, mean_path}
-      - histogram: [{midpoint, range, count}, ...]
-      - stats: {itm_prob, max_payoff, std_dev}
-      - elapsed_ms: computation time
-    """
+    """Main endpoint — runs all three MC methods + BS and returns everything."""
     data = request.get_json()
 
     S0 = float(data.get("S0", 100))
@@ -198,7 +164,7 @@ def simulate():
     option_type = data.get("option_type", "call")
     seed = data.get("seed", None)
 
-    # Clamp values for safety
+    # don't let anyone ddos us with 10M sims
     n_sim = max(100, min(n_sim, 500000))
     n_paths = max(5, min(n_paths, 100))
     T = max(0.01, T)
@@ -206,21 +172,17 @@ def simulate():
 
     t0 = time.perf_counter()
 
-    # 1. Black-Scholes
     bs_price = black_scholes(S0, K, T, r, sigma, option_type)
-
-    # 2. GBM paths for visualisation
     gbm = simulate_gbm_paths(S0, r, sigma, T, n_steps=252, n_paths=n_paths, seed=seed)
 
-    # 3. Monte Carlo methods
+    # run all three MC flavors
     res_std = mc_standard(S0, K, T, r, sigma, n_sim, option_type, seed=seed)
     res_anti = mc_antithetic(S0, K, T, r, sigma, n_sim, option_type, seed=seed)
     res_ctrl = mc_control_variate(S0, K, T, r, sigma, n_sim, option_type, seed=seed)
 
-    # 4. Payoff histogram (from standard MC)
     histogram = build_histogram(res_std.payoffs, bins=60)
 
-    # 5. Payoff statistics
+    # quick stats for the payoff panel
     import numpy as np
     payoffs_arr = np.array(res_std.payoffs)
     itm_prob = float(np.mean(payoffs_arr > 0) * 100)
@@ -229,8 +191,7 @@ def simulate():
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    # 6. Merge convergence data for all methods
-    # We align by 'n' so the frontend can plot all on the same x-axis
+    # merge convergence series so the frontend can overlay them on one chart
     conv_map = {}
     for c in res_std.convergence:
         conv_map[c["n"]] = {
@@ -280,12 +241,7 @@ def simulate():
 
 @app.route("/api/sensitivity", methods=["POST"])
 def sensitivity():
-    """
-    Run sensitivity analysis.
-
-    Request JSON: same params as /api/simulate
-    Returns: {spot, vol, time} sensitivity data
-    """
+    """BS price sweeps across spot, vol, and time — for the sensitivity charts."""
     data = request.get_json()
 
     S0 = float(data.get("S0", 100))
