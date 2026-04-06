@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Monte Carlo Option Pricer</title>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,600;1,300&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#060a0e;overflow-x:hidden;font-family:'Newsreader',Georgia,serif;color:#c8e6d8}
+#root{max-width:1100px;margin:0 auto;padding:24px 20px;min-height:100vh}
+input:focus,select:focus{outline:1px solid rgba(0,255,136,0.3)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #00ff8833;border-top-color:#00ff88;border-radius:50%;animation:sp .8s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"><div style="text-align:center;padding:100px 20px"><div class="spin"></div><span style="font-family:'IBM Plex Mono';font-size:12px;color:#3a6a50">Loading scripts...</span></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+<script>
+(function(){
+"use strict";
+var h=React.createElement,F=React.Fragment,us=React.useState,uc=React.useCallback,um=React.useMemo,ue=React.useEffect;
+var LC=Recharts.LineChart,Ln=Recharts.Line,XA=Recharts.XAxis,YA=Recharts.YAxis,CG=Recharts.CartesianGrid,TT=Recharts.Tooltip,LG=Recharts.Legend,AC=Recharts.AreaChart,Ar=Recharts.Area,BC=Recharts.BarChart,Br=Recharts.Bar,RC=Recharts.ResponsiveContainer,RL=Recharts.ReferenceLine;
+var API="http://127.0.0.1:5000";
+var M="'IBM Plex Mono',monospace";
+var LBL={fontFamily:M,fontSize:9,fontWeight:600,textTransform:"uppercase",letterSpacing:".15em",color:"#4a7a60",marginBottom:3,display:"block"};
+var INP={background:"rgba(0,255,136,.04)",border:"1px solid rgba(0,255,136,.15)",borderRadius:3,padding:"7px 9px",color:"#c8e6d8",fontFamily:M,fontSize:12,width:"100%",outline:"none"};
+var TK={fill:"#3a6a50",fontSize:9,fontFamily:M};
+var TK8={fill:"#3a6a50",fontSize:8,fontFamily:M};
+
+function Tip(p){
+  if(!p.active||!p.payload||!p.payload.length)return null;
+  var pf=p.prefix||"";
+  return h("div",{style:{background:"rgba(8,10,14,.95)",border:"1px solid rgba(0,255,136,.2)",borderRadius:4,padding:"6px 10px",fontSize:11,fontFamily:M}},
+    h("p",{style:{color:"#00ff88",margin:0,marginBottom:3}},pf+p.label),
+    p.payload.map(function(x,i){return h("p",{key:i,style:{color:x.color,margin:0,fontSize:10}},x.name+": "+(typeof x.value==="number"?x.value.toFixed(4):x.value))}));
+}
+
+function App(){
+  var _p=us({S0:100,K:105,T:1,r:.05,sigma:.2,n_sim:50000,n_paths:30,option_type:"call"});
+  var P=_p[0],sP=_p[1];
+  var _r=us(null),R=_r[0],sR=_r[1];
+  var _s=us(null),S=_s[0],sS=_s[1];
+  var _n=us(false),busy=_n[0],sBusy=_n[1];
+  var _e=us(null),err=_e[0],sErr=_e[1];
+  var _t=us("paths"),tab=_t[0],sTab=_t[1];
+
+  function up(k,v){sP(function(o){var n={};for(var x in o)n[x]=o[x];n[k]=v;return n})}
+
+  var go=uc(function(){
+    sBusy(true);sErr(null);
+    Promise.all([
+      fetch(API+"/api/simulate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(P)}),
+      fetch(API+"/api/sensitivity",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(P)})
+    ]).then(function(r){
+      if(!r[0].ok)throw new Error("Simulate error "+r[0].status);
+      return Promise.all([r[0].json(),r[1].json()]);
+    }).then(function(d){sR(d[0]);sS(d[1]);sBusy(false)})
+    .catch(function(e){sErr(e.message);sBusy(false)});
+  },[P]);
+
+  ue(function(){go()},[]);
+
+  // Transform GBM paths
+  var gbm=um(function(){
+    if(!R||!R.gbm_paths)return null;
+    var g=R.gbm_paths;
+    return g.time_grid.map(function(t,s){
+      var pt={time:t.toFixed(3)};
+      g.paths.forEach(function(p,i){pt["p"+i]=p[s]});
+      pt.mean=g.mean_path[s];return pt;
+    });
+  },[R]);
+
+  // Sensitivity transforms
+  var spD=um(function(){if(!S||!S.spot)return null;return S.spot.spots.map(function(s,i){return{spot:s.toFixed(1),price:S.spot.prices[i],intrinsic:S.spot.intrinsic[i]}})},[S]);
+  var vlD=um(function(){if(!S||!S.vol)return null;return S.vol.vols.map(function(v,i){return{vol:v.toFixed(1),price:S.vol.prices[i]}})},[S]);
+  var tmD=um(function(){if(!S||!S.time)return null;return S.time.times.map(function(t,i){return{time:t.toFixed(3),price:S.time.prices[i]}})},[S]);
+
+  var pc=["#00ff88","#00e67a","#00cc6c","#00b35e","#009950","#00804a","#33ff99","#1aff8e","#4dffa6","#00d4ff","#00bbdd","#00a3bb","#008a99","#33ddff","#1ad5ff","#00ffcc","#00e6b8","#00cca3","#00b38f","#33ffcc","#1affcc","#4dffcc","#66ffd9","#00f0bf","#00663c","#007177","#4de5ff","#66eaff","#00c8ee","#00997a"];
+
+  // ── BUILD UI ─────────────────────────────────
+  var els = [];
+
+  // HEADER
+  els.push(h("div",{key:"hdr",style:{textAlign:"center",marginBottom:28,position:"relative"}},
+    h("div",{style:{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:300,height:300,background:"radial-gradient(circle,rgba(0,255,136,.03) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}),
+    h("div",{style:{fontFamily:M,fontSize:9,letterSpacing:".5em",color:"#00ff88",textTransform:"uppercase",marginBottom:6,opacity:.7}},"Python Backend \xb7 NumPy Engine \xb7 Flask API"),
+    h("h1",{style:{fontSize:32,fontWeight:300,margin:0,color:"#00ff88",textShadow:"0 0 40px rgba(0,255,136,.15)"}},"Monte Carlo Option Pricer"),
+    h("div",{style:{fontSize:13,color:"#3a6a50",marginTop:5,fontStyle:"italic"}},"GBM Simulation \xb7 Black\u2013Scholes Validation \xb7 Variance Reduction"),
+    R&&R.elapsed_ms?h("div",{style:{fontFamily:M,fontSize:10,color:"#2a5a40",marginTop:6}},"Backend computed in "+R.elapsed_ms+"ms"):null
+  ));
+
+  // ERROR
+  if(err) els.push(h("div",{key:"err",style:{background:"rgba(255,60,60,.08)",border:"1px solid rgba(255,60,60,.3)",borderRadius:6,padding:"12px 16px",marginBottom:20,textAlign:"center",fontFamily:M,fontSize:12,color:"#ff6666"}},err,h("div",{style:{fontSize:10,color:"#994444",marginTop:4}},"Make sure Flask is running: python app.py")));
+
+  // PARAMS
+  var fields=[{k:"S0",l:"Spot (S\u2080)",s:1},{k:"K",l:"Strike (K)",s:1},{k:"T",l:"Maturity (T)",s:.1},{k:"r",l:"Rate (r)",s:.005},{k:"sigma",l:"Vol (\u03c3)",s:.01},{k:"n_sim",l:"Simulations",s:10000}];
+  els.push(h("div",{key:"par",style:{background:"rgba(0,255,136,.02)",border:"1px solid rgba(0,255,136,.08)",borderRadius:8,padding:16,marginBottom:20}},
+    h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(115px,1fr))",gap:12}},
+      fields.map(function(f){return h("div",{key:f.k},h("label",{style:LBL},f.l),h("input",{type:"number",step:f.s,value:P[f.k],style:INP,onChange:function(e){up(f.k,+e.target.value)}}))}),
+      h("div",{key:"np"},h("label",{style:LBL},"Paths"),h("input",{type:"number",step:5,value:P.n_paths,min:5,max:100,style:INP,onChange:function(e){up("n_paths",+e.target.value)}})),
+      h("div",{key:"ot"},h("label",{style:LBL},"Type"),h("select",{value:P.option_type,style:Object.assign({},INP,{cursor:"pointer"}),onChange:function(e){up("option_type",e.target.value)}},h("option",{value:"call"},"Call"),h("option",{value:"put"},"Put")))
+    ),
+    h("div",{style:{textAlign:"center",marginTop:14}},
+      h("button",{disabled:busy,onClick:go,style:{background:busy?"rgba(0,255,136,.06)":"rgba(0,255,136,.12)",color:busy?"#3a6a50":"#00ff88",border:"1px solid "+(busy?"rgba(0,255,136,.1)":"rgba(0,255,136,.3)"),borderRadius:4,padding:"10px 40px",fontFamily:M,fontSize:11,fontWeight:500,letterSpacing:".12em",textTransform:"uppercase",cursor:busy?"wait":"pointer"}},busy?h("span",null,h("span",{className:"spin"}),"Computing..."):"\u25b6 Run Simulation"))
+  ));
+
+  if(R){
+    // RESULT CARDS
+    var cards=[{l:"Black\u2013Scholes",v:R.bs_price,c:"#00ff88",e:null},{l:"MC Standard",v:R.mc_standard.price,c:"#00d4ff",e:R.mc_standard.stderr},{l:"MC Antithetic",v:R.mc_antithetic.price,c:"#ffaa00",e:R.mc_antithetic.stderr},{l:"MC Control Var.",v:R.mc_control.price,c:"#ff6688",e:R.mc_control.stderr}];
+    els.push(h("div",{key:"cards",style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))",gap:10,marginBottom:20}},
+      cards.map(function(c){return h("div",{key:c.l,style:{background:"rgba(0,0,0,.3)",border:"1px solid "+c.c+"18",borderRadius:6,padding:"14px 16px",position:"relative"}},
+        h("div",{style:{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,"+c.c+"44,transparent)"}}),
+        h("div",{style:Object.assign({},LBL,{color:c.c+"88"})},c.l),
+        h("div",{style:{fontSize:24,fontWeight:300,fontFamily:M,color:c.c}},c.v.toFixed(4)),
+        c.e!==null?h("div",{style:{fontSize:10,color:"#3a6a50",fontFamily:M,marginTop:3}},"\xb1 "+c.e.toFixed(4)+" ",h("span",{style:{color:c.c+"66"}},"("+((c.v-R.bs_price)/R.bs_price*100).toFixed(3)+"%)")):null
+      )})
+    ));
+
+    // VARIANCE REDUCTION
+    var vrs=[{l:"Standard MC",se:R.mc_standard.stderr,c:"#00d4ff"},{l:"Antithetic",se:R.mc_antithetic.stderr,c:"#ffaa00"},{l:"Control Var.",se:R.mc_control.stderr,c:"#ff6688"}];
+    els.push(h("div",{key:"var",style:{background:"rgba(0,0,0,.2)",border:"1px solid rgba(0,255,136,.06)",borderRadius:6,padding:14,marginBottom:20}},
+      h("div",{style:Object.assign({},LBL,{color:"#00ff88",marginBottom:10})},"Variance Reduction Effectiveness"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}},
+        vrs.map(function(v){var r=(1-v.se/R.mc_standard.stderr)*100,w=v.se/R.mc_standard.stderr*100;return h("div",{key:v.l},h("div",{style:{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a7a60",marginBottom:3}},h("span",null,v.l),h("span",{style:{fontFamily:M,color:v.c}},r>0?"\u2212"+r.toFixed(1)+"%":"baseline")),h("div",{style:{height:4,background:"rgba(255,255,255,.03)",borderRadius:2,overflow:"hidden"}},h("div",{style:{width:Math.min(w,100)+"%",height:"100%",background:"linear-gradient(90deg,"+v.c+","+v.c+"66)",borderRadius:2}})))}))
+    ));
+
+    // TABS
+    var tabs=[{id:"paths",l:"GBM Paths"},{id:"payoff",l:"Payoff Dist."},{id:"convergence",l:"Convergence"},{id:"sensitivity",l:"Sensitivity"}];
+    els.push(h("div",{key:"tabs",style:{display:"flex",gap:1,marginBottom:1,flexWrap:"wrap"}},
+      tabs.map(function(t){return h("button",{key:t.id,onClick:function(){sTab(t.id)},style:{borderRadius:"6px 6px 0 0",padding:"8px 18px",fontFamily:M,fontSize:10,fontWeight:500,letterSpacing:".05em",textTransform:"uppercase",cursor:"pointer",border:"1px solid "+(tab===t.id?"rgba(0,255,136,.2)":"rgba(255,255,255,.03)"),borderBottom:tab===t.id?"1px solid #060a0e":void 0,background:tab===t.id?"rgba(0,255,136,.06)":"rgba(0,0,0,.2)",color:tab===t.id?"#00ff88":"#3a6a50"}},t.l)})
+    ));
+
+    // CHART CONTENT
+    var chart=null;
+
+    if(tab==="paths"&&gbm){
+      var lines=[];
+      for(var i=0;i<P.n_paths;i++){lines.push(h(Ln,{key:"p"+i,type:"monotone",dataKey:"p"+i,stroke:pc[i%pc.length],strokeWidth:.8,dot:false,strokeOpacity:.4,isAnimationActive:false}))}
+      chart=h("div",null,
+        h("div",{style:{fontSize:12,color:"#3a6a50",marginBottom:10,fontStyle:"italic"}},P.n_paths+" simulated trajectories \u2014 risk-neutral GBM via NumPy"),
+        h(RC,{width:"100%",height:400},h(LC,{data:gbm,margin:{top:10,right:16,bottom:20,left:16}},h(CG,{strokeDasharray:"3 3",stroke:"rgba(0,255,136,.04)"}),h(XA,{dataKey:"time",tick:TK,label:{value:"Time (years)",position:"bottom",fill:"#3a6a50",fontSize:10}}),h(YA,{tick:TK,label:{value:"Price",angle:-90,position:"left",fill:"#3a6a50",fontSize:10}}),h(TT,{content:h(Tip,{prefix:"t = "})}),h(RL,{y:P.K,stroke:"#00ff8833",strokeDasharray:"8 4",label:{value:"K="+P.K,fill:"#00ff88",fontSize:9,position:"right"}}),lines,h(Ln,{type:"monotone",dataKey:"mean",stroke:"#fff",strokeWidth:2,dot:false,strokeDasharray:"6 3",isAnimationActive:false}))),
+        h("div",{style:{display:"flex",gap:16,justifyContent:"center",marginTop:6,fontSize:10,color:"#3a6a50"}},h("span",null,"\u2014 \u2014 Mean path"),h("span",{style:{color:"#00ff88"}},"- - Strike (K)"))
+      );
+    }
+
+    if(tab==="payoff"&&R.histogram){
+      chart=h("div",null,
+        h("div",{style:{fontSize:12,color:"#3a6a50",marginBottom:10,fontStyle:"italic"}},"Discounted payoff distribution \u2014 zero-mass = OTM expiries"),
+        h(RC,{width:"100%",height:380},h(BC,{data:R.histogram,margin:{top:10,right:16,bottom:20,left:16}},h(CG,{strokeDasharray:"3 3",stroke:"rgba(0,255,136,.04)"}),h(XA,{dataKey:"range",tick:TK8,interval:Math.floor(R.histogram.length/10),label:{value:"Discounted Payoff",position:"bottom",fill:"#3a6a50",fontSize:10}}),h(YA,{tick:TK,label:{value:"Frequency",angle:-90,position:"left",fill:"#3a6a50",fontSize:10}}),h(TT,{content:h(Tip,{prefix:"Payoff \u2248 "})}),h(Br,{dataKey:"count",fill:"#00d4ff44",stroke:"#00d4ff",strokeWidth:.5,radius:[1,1,0,0],isAnimationActive:false}))),
+        h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,marginTop:10,padding:"10px 14px",background:"rgba(0,0,0,.2)",borderRadius:4}},
+          [{l:"Mean Payoff",v:R.mc_standard.price.toFixed(4)},{l:"ITM Prob.",v:R.stats.itm_prob.toFixed(1)+"%"},{l:"Max Payoff",v:R.stats.max_payoff.toFixed(2)},{l:"Std Dev",v:R.stats.std_dev.toFixed(4)}].map(function(s){return h("div",{key:s.l},h("div",{style:{fontFamily:M,fontSize:8,color:"#3a6a50",textTransform:"uppercase",letterSpacing:".1em"}},s.l),h("div",{style:{fontFamily:M,fontSize:14,color:"#c8e6d8",marginTop:1}},s.v))}))
+      );
+    }
+
+    if(tab==="convergence"&&R.convergence){
+      chart=h("div",null,
+        h("div",{style:{fontSize:12,color:"#3a6a50",marginBottom:10,fontStyle:"italic"}},"All three MC methods converging toward Black\u2013Scholes"),
+        h(RC,{width:"100%",height:400},h(LC,{data:R.convergence,margin:{top:10,right:16,bottom:20,left:16}},h(CG,{strokeDasharray:"3 3",stroke:"rgba(0,255,136,.04)"}),h(XA,{dataKey:"n",tick:TK,label:{value:"Simulations",position:"bottom",fill:"#3a6a50",fontSize:10},tickFormatter:function(v){return v>=1e3?(v/1e3|0)+"k":v}}),h(YA,{tick:TK,domain:["auto","auto"],label:{value:"Option Price",angle:-90,position:"left",fill:"#3a6a50",fontSize:10}}),h(TT,{content:h(Tip,{prefix:"N = "})}),h(LG,{verticalAlign:"top",height:32,formatter:function(v){return h("span",{style:{color:"#4a7a60",fontSize:10}},v)}}),h(RL,{y:R.bs_price,stroke:"#00ff88",strokeWidth:2,strokeDasharray:"8 4"}),h(Ln,{type:"monotone",dataKey:"standard",stroke:"#00d4ff",strokeWidth:1.5,dot:false,name:"Standard",isAnimationActive:false}),h(Ln,{type:"monotone",dataKey:"antithetic",stroke:"#ffaa00",strokeWidth:1.5,dot:false,name:"Antithetic",isAnimationActive:false}),h(Ln,{type:"monotone",dataKey:"control",stroke:"#ff6688",strokeWidth:1.5,dot:false,name:"Control Var.",isAnimationActive:false}))),
+        h("div",{style:{textAlign:"center",fontSize:10,color:"#00ff88",marginTop:6,fontFamily:M}},"\u2014 \u2014 Black\u2013Scholes = "+R.bs_price.toFixed(4))
+      );
+    }
+
+    if(tab==="sensitivity"&&spD){
+      chart=h("div",null,
+        h("div",{style:{fontSize:12,color:"#3a6a50",marginBottom:12,fontStyle:"italic"}},"BS "+P.option_type+" price sensitivity"),
+        h("div",{style:{marginBottom:20}},
+          h("div",{style:Object.assign({},LBL,{color:"#00ff88",marginBottom:6})},"Price vs Spot"),
+          h(RC,{width:"100%",height:200},h(AC,{data:spD,margin:{top:5,right:16,bottom:15,left:16}},h(CG,{strokeDasharray:"3 3",stroke:"rgba(0,255,136,.04)"}),h(XA,{dataKey:"spot",tick:TK8,interval:Math.floor(spD.length/8),label:{value:"Spot Price",position:"bottom",fill:"#3a6a50",fontSize:9}}),h(YA,{tick:TK8}),h(TT,{content:h(Tip,{prefix:"S = "})}),h(Ar,{type:"monotone",dataKey:"intrinsic",stroke:"#00ff8822",fill:"#00ff8808",strokeDasharray:"4 4",name:"Intrinsic",isAnimationActive:false}),h(Ar,{type:"monotone",dataKey:"price",stroke:"#00d4ff",fill:"#00d4ff10",strokeWidth:2,name:"BS Price",isAnimationActive:false})))
+        ),
+        h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}},
+          h("div",null,h("div",{style:Object.assign({},LBL,{color:"#ffaa00",marginBottom:6})},"Price vs Volatility"),h(RC,{width:"100%",height:180},h(LC,{data:vlD,margin:{top:5,right:8,bottom:15,left:8}},h(CG,{strokeDasharray:"3 3",stroke:"rgba(0,255,136,.04)"}),h(XA,{dataKey:"vol",tick:TK8,interval:Math.floor(vlD.length/5),label:{value:"Volatility %",position:"bottom",fill:"#3a6a50",fontSize:9}}),h(YA,{tick:TK8}),h(TT,{content:h(Tip,{prefix:"\u03c3 = "})}),h(Ln,{type:"monotone",dataKey:"price",stroke:"#ffaa00",strokeWidth:2,dot:false,isAnimationActive:false})))),
+          h("div",null,h("div",{style:Object.assign({},LBL,{color:"#ff6688",marginBottom:6})},"Price vs Time"),h(RC,{width:"100%",height:180},h(LC,{data:tmD,margin:{top:5,right:8,bottom:15,left:8}},h(CG,{strokeDasharray:"3 3",stroke:"rgba(0,255,136,.04)"}),h(XA,{dataKey:"time",tick:TK8,interval:Math.floor(tmD.length/5),label:{value:"Time (years)",position:"bottom",fill:"#3a6a50",fontSize:9}}),h(YA,{tick:TK8}),h(TT,{content:h(Tip,{prefix:"T = "})}),h(Ln,{type:"monotone",dataKey:"price",stroke:"#ff6688",strokeWidth:2,dot:false,isAnimationActive:false}))))
+        )
+      );
+    }
+
+    els.push(h("div",{key:"chart",style:{background:"rgba(0,0,0,.2)",border:"1px solid rgba(0,255,136,.06)",borderRadius:"0 6px 6px 6px",padding:16,minHeight:420}},chart));
+
+    // FOOTER
+    els.push(h("div",{key:"foot",style:{marginTop:20,padding:"14px 16px",background:"rgba(0,0,0,.15)",border:"1px solid rgba(0,255,136,.05)",borderRadius:6,fontSize:11,color:"#3a6a50",lineHeight:1.6,fontFamily:M}},
+      h("div",{style:{color:"#00ff88",fontSize:9,letterSpacing:".15em",textTransform:"uppercase",marginBottom:6}},"Architecture"),
+      h("p",{style:{margin:"0 0 6px"}},h("span",{style:{color:"#00d4ff"}},"Backend: "),"Python 3 + Flask + NumPy + SciPy \u2014 vectorised simulation"),
+      h("p",{style:{margin:"0 0 6px"}},h("span",{style:{color:"#ffaa00"}},"API: "),"POST /api/simulate \xb7 POST /api/sensitivity"),
+      h("p",{style:{margin:0}},h("span",{style:{color:"#ff6688"}},"Frontend: "),"React + Recharts \u2014 all computation on Python backend")
+    ));
+  }
+
+  return h("div",null,els);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+})();
+</script>
+</body>
+</html>
