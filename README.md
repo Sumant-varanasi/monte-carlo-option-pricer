@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Monte Carlo Option Pricing Engine
 
 A full-stack quantitative finance application with a **Python/NumPy backend** and **React frontend**.
@@ -99,3 +100,6 @@ The frontend (`frontend/monte_carlo_frontend.jsx`) is a React component that:
 
 With NumPy vectorisation, 500,000 simulations across all three MC methods
 typically complete in **< 500ms** on the backend.
+=======
+# monte-carlo-option-pricer
+>>>>>>> b48d8a7499da6a2a92ab1f04469507bb7b312e7c
