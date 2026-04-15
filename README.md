@@ -33,8 +33,8 @@ Simulates **50,000 stochastic stock price paths** under Geometric Brownian Motio
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────┐       HTTP/JSON        ┌──────────────────────────┐
-│   Chart.js Frontend     │ ◄───────────────────►  │    Python Backend         │
+┌─────────────────────────┐       HTTP/JSON         ┌──────────────────────────┐
+│   Chart.js Frontend     │ ◄───────────────────►   │    Python Backend        │
 │                         │   POST /api/simulate    │                          │
 │  • Parameter controls   │   POST /api/sensitivity │  • NumPy vectorised GBM  │
 │  • GBM path charts      │   GET  /api/health      │  • SciPy (norm.cdf)      │
